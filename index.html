@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TTS Reader</title>
+    <link rel="stylesheet" href="assets/styles/design.css">
+    <link rel="icon" href="assets/media/favicon.ico" type="image/x-icon">
+</head>
+<body>
+
+<div class="app-shell">
+  <header class="app-header">
+    <div class="app-title">
+      <h1>Natural TTS Reader & Screen Recorder</h1>
+      <span>Paste unlimited text, choose US/UK voices, control playback, and capture sessions.</span>
+    </div>
+    <div class="badge">
+      <span class="badge-dot"></span>
+      <span>Client-side prototype · Web Speech + MediaRecorder</span>
+    </div>
+  </header>
+
+  <main class="app-body">
+    <section class="card">
+      <div class="card-header">
+        <h2>Text to read</h2>
+        <small>Unlimited length (browser memory permitting)</small>
+      </div>
+      <textarea id="textInput" placeholder="Paste or type any amount of text here."></textarea>
+      <div class="text-toolbar">
+        <span><span class="pill">Unlimited text</span> No enforced character limit; very large texts may impact performance.</span>
+        <span id="charCount">0 characters</span>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="card-header">
+        <h2>Voice & playback</h2>
+        <small>Choose reader, adjust speed, control playback & screen recording</small>
+      </div>
+
+      <div class="controls-stack">
+        <div class="voice-row">
+          <label class="hint">
+            <strong>Voice region:</strong> Select US English or UK English readers. Voices are grouped by locale.
+          </label>
+          <div class="voice-tabs">
+            <button class="voice-tab active" id="tabUS" type="button">
+              <span class="flag flag-us"></span>
+              <span>US English</span>
+            </button>
+            <button class="voice-tab" id="tabUK" type="button">
+              <span class="flag flag-uk"></span>
+              <span>UK English</span>
+            </button>
+          </div>
+        </div>
+
+        <div class="voice-select-row">
+          <label for="voiceSelect" class="hint">
+            <strong>Voice:</strong> Browser voices filtered by locale (<code>en-US</code> / <code>en-GB</code>).
+          </label>
+          <select id="voiceSelect"></select>
+        </div>
+
+        <div class="slider-row">
+          <span>Playback speed: <strong id="rateLabel">1.0×</strong></span>
+          <input title="Playback speed" type="range" id="rateSlider" min="0.5" max="2" step="0.1" value="1" />
+        </div>
+
+        <div class="media-bar">
+          <div class="media-left">
+            <button class="btn-icon primary" id="playPauseBtn" type="button" title="Play / Pause">
+              <svg id="playIcon" viewBox="0 0 24 24">
+                <polygon fill="currentColor" points="8,5 19,12 8,19"></polygon>
+              </svg>
+              <svg id="pauseIcon" viewBox="0 0 24 24" style="display:none">
+                <rect x="7" y="5" width="4" height="14" fill="currentColor"></rect>
+                <rect x="13" y="5" width="4" height="14" fill="currentColor"></rect>
+              </svg>
+            </button>
+
+            <button class="btn-icon stop" id="stopBtn" type="button" title="Stop">
+              <svg viewBox="0 0 24 24">
+                <rect x="6" y="6" width="12" height="12" fill="currentColor"></rect>
+              </svg>
+            </button>
+
+            <div class="media-label">
+              <strong id="playStatus">Idle</strong>
+              <span>Controls text-to-speech playback</span>
+            </div>
+          </div>
+
+          <div class="media-right">
+            <button class="btn-icon" id="screenRecordBtn" type="button" title="Record screen + audio">
+              <svg viewBox="0 0 24 24">
+                <rect x="4" y="6" width="16" height="12" rx="2" ry="2" fill="currentColor"></rect>
+                <polygon points="10,9 15,12 10,15" fill="#0b1120"></polygon>
+              </svg>
+            </button>
+            <div class="media-label">
+              <strong id="screenStatus">Screen idle</strong>
+              <span>Record screen with system audio + optional mic</span>
+            </div>
+          </div>
+        </div>
+
+        <video id="screenPreview" controls></video>
+
+        <div class="status-row">
+          <span><span class="status-dot" id="ttsDot"></span> TTS: <strong id="ttsStatus">Ready</strong></span>
+          <span><span class="status-dot" id="recDot"></span> Screen Rec: <strong id="recStatus">Off</strong></span>
+        </div>
+      </div>
+    </section>
+    
+    <footer class="app-footer">
+    <div class="footer-inner">
+        <span class="footer-title">Natural TTS Reader & Screen Recorder.</span>
+        <span class="footer-sub">
+        <span class="copyright-icon">©</span>
+        <span id="copyright-year"></span> Tuta. All rights reserved.
+        </span>
+    </div>
+    </footer>
+    
+  </main>
+</div>
+
+<script src="assets/scripts/main.js"></script>
+
+</body>
+</html>
