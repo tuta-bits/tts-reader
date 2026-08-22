@@ -1,4 +1,7 @@
-// --- STATE ---
+/* ============================================================
+   GLOBAL STATE
+============================================================ */
+
 const textInput = document.getElementById("textInput");
 const charCount = document.getElementById("charCount");
 
@@ -27,61 +30,63 @@ const recStatus = document.getElementById("recStatus");
 
 let voices = [];
 let currentLocale = "en-US";
+let selectedVoice = null;
+
 let currentUtterance = null;
 let isPlaying = false;
 let isPaused = false;
-let startOffset = 0;
 
-let screenRecorder = null;
-let screenChunks = [];
-let isScreenRecording = false;
+let chunks = [];
+let currentChunkIndex = 0;
+let globalOffset = 0;
 
-// --- TEXT COUNTER ---
+/* ============================================================
+   TEXT COUNTER
+============================================================ */
+
 textInput.addEventListener("input", () => {
   charCount.textContent = `${textInput.value.length} characters`;
 });
 
-// --- SYNC OVERLAY SCROLL ---
+/* ============================================================
+   SYNC OVERLAY SCROLL
+============================================================ */
+
 textInput.addEventListener("scroll", () => {
   if (window._overlay) window._overlay.scrollTop = textInput.scrollTop;
 });
 
-// --- VOICES LOADING ---
+/* ============================================================
+   LOAD VOICES
+============================================================ */
+
 function loadVoices() {
-  voices = window.speechSynthesis.getVoices();
+  voices = speechSynthesis.getVoices();
   populateVoiceSelect();
 }
 
 function populateVoiceSelect() {
   const filtered = voices.filter(v => v.lang === currentLocale);
-  voiceSelect.innerHTML = "";
 
-  if (filtered.length === 0) {
-    const opt = document.createElement("option");
-    opt.value = "";
-    opt.textContent = `No ${currentLocale} voices available`;
-    voiceSelect.appendChild(opt);
-    ttsStatus.textContent = "No matching voices";
-    ttsDot.classList.remove("active");
-    return;
-  }
+  voiceSelect.innerHTML = "";
 
   filtered.forEach(v => {
     const opt = document.createElement("option");
     opt.value = v.name;
-    opt.textContent = `${v.name} (${v.lang})`;
+    opt.textContent = `${v.name} (${v.lang}) ${v.localService ? "(Microsoft)" : "(Google)"}`;
     voiceSelect.appendChild(opt);
   });
 
   voiceSelect.selectedIndex = 0;
-  ttsStatus.textContent = `Loaded ${filtered.length} voices`;
-  ttsDot.classList.add("active");
 }
 
 speechSynthesis.onvoiceschanged = loadVoices;
 loadVoices();
 
-// --- REGION TABS ---
+/* ============================================================
+   REGION TABS
+============================================================ */
+
 function setRegion(locale) {
   currentLocale = locale;
   tabUS.classList.toggle("active", locale === "en-US");
@@ -92,31 +97,33 @@ function setRegion(locale) {
 tabUS.addEventListener("click", () => setRegion("en-US"));
 tabUK.addEventListener("click", () => setRegion("en-GB"));
 
-// --- PLAYBACK SPEED ---
+/* ============================================================
+   PLAYBACK SPEED
+============================================================ */
+
 rateSlider.addEventListener("input", () => {
   const rate = parseFloat(rateSlider.value);
   rateLabel.textContent = `${rate.toFixed(1)}×`;
   if (currentUtterance) currentUtterance.rate = rate;
 });
 
-// ============================================================
-// ⭐⭐ UK VOICE FALLBACK — ESTIMATE WORD INDEX
-// ============================================================
+/* ============================================================
+   CHUNKING (ONLY FOR GOOGLE VOICES)
+============================================================ */
 
-function estimateWordIndex(text) {
-  if (!window._overlay) return 0;
-
-  const html = window._overlay.innerHTML;
-
-  // Remove HTML tags → get plain text
-  const plainText = html.replace(/<[^>]+>/g, "");
-
-  return plainText.length;
+function chunkText(text, size = 2000) {
+  const chunks = [];
+  let i = 0;
+  while (i < text.length) {
+    chunks.push(text.slice(i, i + size));
+    i += size;
+  }
+  return chunks;
 }
 
-// ============================================================
-// ⭐⭐ HIGHLIGHT OVERLAY SYSTEM (WORD + SENTENCE)
-// ============================================================
+/* ============================================================
+   HIGHLIGHT OVERLAY SYSTEM
+============================================================ */
 
 function applyHighlight(start, end, type) {
   const text = textInput.value;
@@ -127,12 +134,7 @@ function applyHighlight(start, end, type) {
 
   const spanClass = type === "word" ? "word-highlight" : "sentence-highlight";
 
-  const html =
-    before +
-    `<span class="${spanClass}">` +
-    target +
-    `</span>` +
-    after;
+  const html = before + `<span class="${spanClass}">` + target + `</span>` + after;
 
   renderHighlight(html);
   autoScrollTo(start);
@@ -171,12 +173,8 @@ function autoScrollTo(index) {
   const mirror = document.createElement("div");
   const style = window.getComputedStyle(textInput);
 
-  [
-    "fontSize", "fontFamily", "lineHeight", "padding", "border",
-    "whiteSpace", "width"
-  ].forEach(prop => {
-    mirror.style[prop] = style[prop];
-  });
+  ["fontSize", "fontFamily", "lineHeight", "padding", "border", "whiteSpace", "width"]
+    .forEach(prop => mirror.style[prop] = style[prop]);
 
   mirror.style.position = "absolute";
   mirror.style.visibility = "hidden";
@@ -186,7 +184,6 @@ function autoScrollTo(index) {
   mirror.textContent = textInput.value.substring(0, index);
 
   document.body.appendChild(mirror);
-
   const caretY = mirror.offsetHeight;
   document.body.removeChild(mirror);
 
@@ -198,92 +195,115 @@ function autoScrollTo(index) {
 function findSentenceBounds(text, index) {
   let start = index;
   while (start > 0 && !".!?".includes(text[start - 1])) start--;
+
   let end = index;
   while (end < text.length && !".!?".includes(text[end])) end++;
+
   return { start, end };
 }
 
-// ============================================================
-// ⭐⭐ TTS PLAYBACK + UK FIX + HIGHLIGHT
-// ============================================================
+/* ============================================================
+   PLAYBACK ENGINE (NORMAL + CHUNKED)
+============================================================ */
 
-function startTTS(fromIndex) {
-  const fullText = textInput.value;
-  if (!fullText.trim()) {
-    playStatus.textContent = "No text to read";
+function playChunk() {
+  if (currentChunkIndex >= chunks.length) {
+    playStatus.textContent = "Finished";
+    isPlaying = false;
     return;
   }
 
-  startOffset = fromIndex || 0;
-  const textToRead = fullText.substring(startOffset);
+  const chunk = chunks[currentChunkIndex];
+  const utterance = new SpeechSynthesisUtterance(chunk);
 
-  if (currentUtterance) {
-    speechSynthesis.cancel();
-    currentUtterance = null;
-  }
-
-  const utterance = new SpeechSynthesisUtterance(textToRead);
-  const selectedName = voiceSelect.value;
-  const voice = voices.find(v => v.name === selectedName);
-  if (voice) utterance.voice = voice;
-
+  utterance.voice = selectedVoice;
   utterance.rate = parseFloat(rateSlider.value);
 
   utterance.onboundary = (event) => {
     const fullText = textInput.value;
 
-    let absoluteIndex;
+    const absoluteIndex =
+      typeof event.charIndex === "number" && event.charIndex > 0
+        ? globalOffset + event.charIndex
+        : globalOffset;
 
-    // ⭐ US voices → charIndex works
-    if (typeof event.charIndex === "number" && event.charIndex > 0) {
-      absoluteIndex = startOffset + event.charIndex;
-    } else {
-      // ⭐ UK voices → fallback
-      absoluteIndex = startOffset + estimateWordIndex(fullText);
-    }
-
-    // --- WORD BOUNDS ---
-    let wStart = absoluteIndex;
-    while (wStart > 0 && /\S/.test(fullText[wStart - 1])) wStart--;
-
-    let wEnd = absoluteIndex;
-    while (wEnd < fullText.length && /\S/.test(fullText[wEnd])) wEnd++;
-
-    // --- SENTENCE BOUNDS ---
     const { start: sStart, end: sEnd } = findSentenceBounds(fullText, absoluteIndex);
-
     applyHighlight(sStart, sEnd, "sentence");
-    applyHighlight(wStart, wEnd, "word");
-  };
 
-  utterance.onstart = () => {
-    isPlaying = true;
-    isPaused = false;
-    playStatus.textContent = "Playing";
-    playIcon.style.display = "none";
-    pauseIcon.style.display = "block";
-    ttsDot.classList.add("active");
+    if (selectedVoice.localService === true && selectedVoice.lang === "en-US") {
+      let wStart = absoluteIndex;
+      while (wStart > 0 && /\S/.test(fullText[wStart - 1])) wStart--;
+
+      let wEnd = absoluteIndex;
+      while (wEnd < fullText.length && /\S/.test(fullText[wEnd])) wEnd++;
+
+      applyHighlight(wStart, wEnd, "word");
+    }
   };
 
   utterance.onend = () => {
-    isPlaying = false;
-    isPaused = false;
-    playStatus.textContent = "Finished";
-    playIcon.style.display = "block";
-    pauseIcon.style.display = "none";
-    ttsDot.classList.remove("active");
-    currentUtterance = null;
-    if (window._overlay) window._overlay.innerHTML = "";
+    globalOffset += chunk.length;
+    currentChunkIndex++;
+    if (!isPaused) playChunk();
   };
 
   currentUtterance = utterance;
   speechSynthesis.speak(utterance);
 }
 
+function startNormalPlayback() {
+  const fullText = textInput.value;
+  const utterance = new SpeechSynthesisUtterance(fullText);
+
+  utterance.voice = selectedVoice;
+  utterance.rate = parseFloat(rateSlider.value);
+
+  utterance.onboundary = (event) => {
+    const absoluteIndex = event.charIndex;
+    const { start: sStart, end: sEnd } = findSentenceBounds(fullText, absoluteIndex);
+    applyHighlight(sStart, sEnd, "sentence");
+
+    if (selectedVoice.lang === "en-US") {
+      let wStart = absoluteIndex;
+      while (wStart > 0 && /\S/.test(fullText[wStart - 1])) wStart--;
+
+      let wEnd = absoluteIndex;
+      while (wEnd < fullText.length && /\S/.test(fullText[wEnd])) wEnd++;
+
+      applyHighlight(wStart, wEnd, "word");
+    }
+  };
+
+  currentUtterance = utterance;
+  speechSynthesis.speak(utterance);
+}
+
+function startPlayback() {
+  const fullText = textInput.value;
+  if (!fullText.trim()) return;
+
+  selectedVoice = voices.find(v => v.name === voiceSelect.value);
+
+  isPlaying = true;
+  isPaused = false;
+
+  playStatus.textContent = "Playing";
+  playIcon.style.display = "none";
+  pauseIcon.style.display = "block";
+
+  if (selectedVoice.localService === true) {
+    startNormalPlayback();
+  } else {
+    chunks = chunkText(fullText, 2000);
+    currentChunkIndex = 0;
+    globalOffset = 0;
+    playChunk();
+  }
+}
+
 function togglePlayPause() {
   if (!isPlaying && !isPaused) {
-    const startIndex = textInput.selectionStart;
-    startTTS(startIndex);
+    startPlayback();
     return;
   }
 
@@ -291,10 +311,10 @@ function togglePlayPause() {
     speechSynthesis.pause();
     isPaused = true;
     isPlaying = false;
+
     playStatus.textContent = "Paused";
     playIcon.style.display = "block";
     pauseIcon.style.display = "none";
-    ttsDot.classList.remove("active");
     return;
   }
 
@@ -302,34 +322,42 @@ function togglePlayPause() {
     speechSynthesis.resume();
     isPaused = false;
     isPlaying = true;
+
     playStatus.textContent = "Playing";
     playIcon.style.display = "none";
     pauseIcon.style.display = "block";
-    ttsDot.classList.add("active");
   }
 }
 
 playPauseBtn.addEventListener("click", togglePlayPause);
 
-// --- STOP BUTTON ---
+/* ============================================================
+   STOP BUTTON
+============================================================ */
+
 stopBtn.addEventListener("click", () => {
   speechSynthesis.cancel();
-  currentUtterance = null;
+
   isPlaying = false;
   isPaused = false;
-  startOffset = 0;
+
+  currentChunkIndex = 0;
+  globalOffset = 0;
 
   playStatus.textContent = "Stopped";
   playIcon.style.display = "block";
   pauseIcon.style.display = "none";
-  ttsDot.classList.remove("active");
 
   if (window._overlay) window._overlay.innerHTML = "";
 });
 
-// ============================================================
-// ⭐⭐ SCREEN RECORDING (unchanged)
-// ============================================================
+/* ============================================================
+   FIXED SCREEN RECORDER MODULE
+============================================================ */
+
+let screenRecorder = null;
+let screenChunks = [];
+let isScreenRecording = false;
 
 async function startScreenRecording() {
   try {
@@ -342,18 +370,24 @@ async function startScreenRecording() {
 
     try {
       const micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+
       const tracks = [
         ...screenStream.getVideoTracks(),
         ...screenStream.getAudioTracks(),
         ...micStream.getAudioTracks()
       ];
+
       finalStream = new MediaStream(tracks);
-    } catch {}
+    } catch (err) {
+      console.warn("Mic unavailable, recording screen only.");
+    }
 
     screenChunks = [];
-    screenRecorder = new MediaRecorder(finalStream);
+    screenRecorder = new MediaRecorder(finalStream, {
+      mimeType: "video/webm; codecs=vp9"
+    });
 
-    screenRecorder.ondataavailable = e => {
+    screenRecorder.ondataavailable = (e) => {
       if (e.data.size > 0) screenChunks.push(e.data);
     };
 
@@ -366,7 +400,7 @@ async function startScreenRecording() {
 
       const a = document.createElement("a");
       a.href = url;
-      a.download = "screen-playback.mp4";
+      a.download = "screen-recording.webm";
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
@@ -380,11 +414,13 @@ async function startScreenRecording() {
 
     screenRecorder.start();
     isScreenRecording = true;
+
     screenRecordBtn.classList.add("danger");
     recDot.classList.add("recording");
     recDot.classList.remove("active");
     recStatus.textContent = "Recording";
     screenStatus.textContent = "Recording screen…";
+
   } catch (err) {
     alert("Screen recording not available or permission denied.");
     screenStatus.textContent = "Screen error";
